@@ -1,0 +1,21 @@
+name: napari-GEMspa
+display_name: GEMs analysis
+contributions:
+  commands:
+    - id: napari-GEMspa.make_qwidget
+      python_name: napari_gemspa._widget:ExampleQWidget
+      title: Make example QWidget
+    - id: napari-GEMspa.make_magic_widget
+      python_name: napari_gemspa._widget:example_magic_widget
+      title: Make example magic widget
+    - id: napari-GEMspa.make_func_widget
+      python_name: napari_gemspa._widget:example_function_widget
+      title: Make example function widget
+  widgets:
+    - command: napari-GEMspa.make_qwidget
+      display_name: Example QWidget
+    - command: napari-GEMspa.make_magic_widget
+      display_name: Example Magic Widget
+    - command: napari-GEMspa.make_func_widget
+      autogenerate: true
+      display_name: Example Function Widget
