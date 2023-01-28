@@ -7,7 +7,7 @@
 [![codecov](https://codecov.io/gh/delnatan/napari-GEMspa/branch/main/graph/badge.svg)](https://codecov.io/gh/delnatan/napari-GEMspa)
 [![napari hub](https://img.shields.io/endpoint?url=https://api.napari-hub.org/shields/napari-GEMspa)](https://napari-hub.org/plugins/napari-GEMspa)
 
-Plugin to ttrack and quantify GEMs within napari
+Plugin to track and quantify GEMs within napari
 
 ----------------------------------
 
@@ -22,12 +22,6 @@ https://napari.org/stable/plugins/index.html
 -->
 
 ## Installation
-
-You can install `napari-GEMspa` via [pip]:
-
-    pip install napari-GEMspa
-
-
 
 To install latest development version :
 
