@@ -549,6 +549,8 @@ class napariGEMspaWidget(QWidget):
             "data": str(current_image_path),
             "dxy": self.pixel_size.text(),
             "dt": self.time_interval.text(),
+            "frame_start": self.frame_start.value(),
+            "frame_end": self.frame_end.value(),
             "spot_threshold": self.laplace_thres.text(),
             "spot_sigma": self.laplace_sigma.text(),
             "max_disp": self.laptrack_max_displacement.text(),
@@ -575,7 +577,7 @@ class napariGEMspaWidget(QWidget):
             )
 
         # save to a JSON file
-        with open(output_path / "params.json", "w") as f:
+        with open(output_path / f"{current_tracks}_params.json", "w") as f:
             json.dump(params, f, indent=2)
 
         if self.msds_data is not None:
