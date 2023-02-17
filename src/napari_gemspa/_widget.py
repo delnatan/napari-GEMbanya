@@ -8,8 +8,10 @@ Replace code below according to your needs.
 """
 import numpy as np
 import pandas as pd
+import tifffile
 import matplotlib.pyplot as plt
 import napari
+import json
 
 from qtpy.QtWidgets import (
     QCheckBox,
@@ -28,8 +30,10 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QTabWidget,
     QWidget,
+    QFileDialog
 )
 from qtpy.QtGui import QDoubleValidator
+from pathlib import Path
 
 from . import _utils as u
 
@@ -59,6 +63,9 @@ class napariGEMspaWidget(QWidget):
         super().__init__()
         self.viewer = napari_viewer
         self._setup_ui()
+
+        self.msds_data = {}
+        self.pwdists_data = {}
 
         # if there are layers, update choices
         if len(self.viewer.layers) > 0:
@@ -232,6 +239,9 @@ class napariGEMspaWidget(QWidget):
         )
         self.plot_msd_button.clicked.connect(self._plot_msd)
         self.plot_pwdists_button.clicked.connect(self._plot_pwdists_hist)
+
+        self.save_state_button.clicked.connect(self.save_state)
+        self.load_state_button.clicked.connect(self.load_state)
 
     def _update_on_inserted(self, event):
         # the layer that triggered the event:
@@ -452,10 +462,15 @@ class napariGEMspaWidget(QWidget):
             .reset_index()
         )
 
+        self.msds_data["data"] = avg_msd
+
         _x = avg_msd["lag"].to_numpy() * dt
         _y = avg_msd["mean"].to_numpy()
         _s = avg_msd["std"].to_numpy()
         slope, mse = u.fitline(_x, _y, _s)
+
+        # slope / 2 * dimensionality => diffusion coefficient
+        self.msds_data["D"] = slope / 4.0
 
         plt.ion()
         fig, ax = plt.subplots(figsize=(4, 3))
@@ -479,9 +494,16 @@ class napariGEMspaWidget(QWidget):
         )
         pwdists = u.get_paired_displacements(tracks)
         pwdists = pwdists[pwdists <= r_max]
+
+        self.pwdists_data["data"] = pwdists
+
         mle_res = u.mle_fit(
             pwdists, init_D=D_init, init_b=slope_init, dt=dt, r_max=r_max
         )
+
+        self.pwdists_data["D"] = mle_res['D']
+        self.pwdists_data["background_slope"] = mle_res['slope']
+
         _dfine = np.linspace(0, r_max, num=200)
 
         plt.ion()
@@ -495,6 +517,85 @@ class napariGEMspaWidget(QWidget):
         )
         ax.set_xlabel("distance, $\mu m$")
         ax.set_ylabel("density")
-        ax.set_title(f"{_current_track}\n D={mle_res['D']:.3f} $\mu m^2 / s$, slope={mle_res['slope']:.4E}")
+        ax.set_title(
+            f"{_current_track}\n D={mle_res['D']:.3f} $\mu m^2 / s$, slope={mle_res['slope']:.4E}"
+        )
         plt.show()
         plt.ioff()
+
+    def save_state(self):
+        current_image = self.input_layer_combo.currentText()
+        current_image_path = Path(self.viewer.layers[current_image].source.path)
+        parent_path = current_image_path.parent
+        output_path = parent_path / current_image_path.stem
+        if not output_path.exists():
+            output_path.mkdir(exist_ok=True)
+
+        # gather all masks
+        masks_layers = [
+            self.mask_layer_combo.itemText(i)
+            for i in range(self.mask_layer_combo.count())
+        ]
+
+        tracks_layers = [
+            self.analysis_input_combo.itemText(i)
+            for i in range(self.analysis_input_combo.count())
+        ]
+
+        current_tracks = self.analysis_input_combo.currentText()
+
+        # gather analysis parameters
+        params = {
+            "data": str(current_image_path),
+            "dxy": self.pixel_size.text(),
+            "dt": self.time_interval.text(),
+            "spot_threshold": self.laplace_thres.text(),
+            "spot_sigma": self.laplace_sigma.text(),
+            "max_disp": self.laptrack_max_displacement.text(),
+            "D_msd (um^2/s)": self.msds_data['D'],
+            "D_pwd (um^2/s)": self.pwdists_data['D'],
+            "bg_pwd": self.pwdists_data['background_slope'],
+        }
+
+        # save all layers data
+        for mask in masks_layers:
+            # save the max projection instead of entire timestacks
+            _mask = self.viewer.layers[mask].data.max(axis=0).astype(np.uint8)
+
+            tifffile.imwrite(
+                output_path / f"{mask}_mask.tif",
+                _mask
+            )
+            
+        for track in tracks_layers:
+            _track = self.viewer.layers[track].data
+            np.savetxt(
+                output_path / f"{track}_track.txt",
+                _track,
+            )
+
+        # save to a JSON file
+        with open(output_path / "params.json", "w") as f:
+            json.dump(params, f, indent=2)
+
+        if self.msds_data is not None:
+            self.msds_data["data"].to_csv(
+                output_path / f"{current_tracks}_MSD.csv", index=False
+            )
+
+        if self.pwdists_data is not None:
+            np.savetxt(
+                output_path / f"{current_tracks}_pwdists.txt",
+                self.pwdists_data["data"],
+                fmt="%.5f"
+            )
+
+    def load_state(self):
+        print("not implemented yet!")
+        folder_path = Path(
+            QFileDialog.getExistingDirectory(
+            None, "Select a folder", "~/"
+            )
+        )
+        print(folder_path)
+        pass
