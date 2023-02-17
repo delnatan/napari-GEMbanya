@@ -2,9 +2,9 @@ name: napari-GEMspa
 display_name: GEMs analysis
 contributions:
   commands:
-    - id: napari-GEMspa.make_qwidget
+    - id: napari-GEMspa.make_GEMspa_widget
       python_name: napari_gemspa._widget:napariGEMspaWidget
       title: napari-GEMspa widget
   widgets:
-    - command: napari-GEMspa.make_qwidget
+    - command: napari-GEMspa.make_GEMspa_widget
       display_name: easy GEMs analysis

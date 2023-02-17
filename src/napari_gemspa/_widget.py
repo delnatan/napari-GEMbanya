@@ -26,6 +26,7 @@ from qtpy.QtWidgets import (
     QPushButton,
     QSpinBox,
     QVBoxLayout,
+    QTabWidget,
     QWidget,
 )
 from qtpy.QtGui import QDoubleValidator
@@ -68,9 +69,22 @@ class napariGEMspaWidget(QWidget):
         self.viewer.layers.events.removed.connect(self._update_on_removed)
 
     def _setup_ui(self):
+        # main layout
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
 
+        # tab widget
+        main_tab = QTabWidget()
+
+        # add main tab widget to main layout
+        self.layout.addWidget(main_tab)
+
+        # subwidget 1 : input & localization
+        subwidget1 = QWidget()
+        subwidget1_layout = QVBoxLayout()
+        subwidget1.setLayout(subwidget1_layout)
+
+        # input layers
         self.input_layer_combo = QComboBox(self)
         self.mask_layer_combo = QComboBox(self)
 
@@ -82,10 +96,10 @@ class napariGEMspaWidget(QWidget):
         self._time_validator = QDoubleValidator()
         self.time_interval.setValidator(self._time_validator)
 
-        # image parameters
-        self.image_params_box = QGroupBox("Input parameters")
+        # image parameters widget
+        _image_params_widget = QWidget()
         _image_params_form = QFormLayout()
-        self.image_params_box.setLayout(_image_params_form)
+        _image_params_widget.setLayout(_image_params_form)
 
         # frame range
         self.frame_start = QSpinBox()
@@ -103,36 +117,43 @@ class napariGEMspaWidget(QWidget):
         _image_params_form.addRow("frame end", self.frame_end)
 
         # localization parameters
-        self.localization_group = QGroupBox("Localization parameters")
-        self.localization_layout = QFormLayout()
-        self.localization_group.setLayout(self.localization_layout)
+        _localization_widget = QWidget()
+        _localization_layout = QFormLayout()
+        _localization_widget.setLayout(_localization_layout)
 
         self.laplace_sigma = QDoubleSpinBox()
         self.laplace_sigma.setRange(0.5, 10.0)
         self.laplace_sigma.setValue(1.5)
         self.laplace_sigma.setSingleStep(0.1)
-
         self.laplace_thres = QDoubleSpinBox()
         self.laplace_thres.setRange(0.0, 20000.0)
         self.laplace_thres.setValue(5.0)
         self.laplace_thres.setSingleStep(1.0)
-
         self.laplace_layername = QLineEdit("peaks")
-
         self.localization_button = QPushButton("Find spots")
 
-        self.localization_layout.addRow("sigma", self.laplace_sigma)
-        self.localization_layout.addRow("threshold", self.laplace_thres)
-        self.localization_layout.addRow("output name", self.laplace_layername)
-        self.localization_layout.addRow(None, self.localization_button)
+        _localization_layout.addRow("sigma", self.laplace_sigma)
+        _localization_layout.addRow("threshold", self.laplace_thres)
+        _localization_layout.addRow("output name", self.laplace_layername)
+        _localization_layout.addRow(None, self.localization_button)
 
-        # tracking parameters
-        self.tracking_group = QGroupBox("Tracking parameters")
-        self.tracking_layout = QVBoxLayout()
+        # add to first tab widget
+        subwidget1_layout.addWidget(_image_params_widget)
+        subwidget1_layout.addWidget(_localization_widget)
+        main_tab.addTab(subwidget1, "Input/localization")
 
-        self.tracking_subwidget = QWidget()
-        _tracking_form_layout = QFormLayout()
-        self.tracking_subwidget.setLayout(_tracking_form_layout)
+        # subwidget 2 : tracking / analysis
+        subwidget2 = QWidget()
+        subwidget2_layout = QVBoxLayout()
+        subwidget2.setLayout(subwidget2_layout)
+
+        _tracking_group = QGroupBox("Trajectory linking")
+        _tracking_layout = QVBoxLayout()
+        _tracking_group.setLayout(_tracking_layout)
+
+        _tracking_subwidget = QWidget()
+        _tracking_subwidget_layout = QFormLayout()
+        _tracking_subwidget.setLayout(_tracking_subwidget_layout)
 
         self.laptrack_input_combo = QComboBox()
         self.laptrack_max_displacement = QDoubleSpinBox(decimals=4)
@@ -142,20 +163,23 @@ class napariGEMspaWidget(QWidget):
         self.laptrack_max_displacement.setValue(1.0)
         self.laptrack_max_displacement.setSingleStep(0.1)
 
-        self.tracking_button = QPushButton("link trajectories")
-
-        _tracking_form_layout.addRow(
+        _tracking_subwidget_layout.addRow(
             "max displacement, um", self.laptrack_max_displacement
         )
-        _tracking_form_layout.addRow(None, self.tracking_button)
 
-        self.tracking_layout.addWidget(self.laptrack_input_combo)
-        self.tracking_layout.addWidget(self.tracking_subwidget)
-        self.tracking_group.setLayout(self.tracking_layout)
+        self.tracking_button = QPushButton("link trajectories")
+        _tracking_subwidget_layout.addRow(None, self.tracking_button)
+
+        _tracking_layout.addWidget(self.laptrack_input_combo)
+        _tracking_layout.addWidget(_tracking_subwidget)
+
+        subwidget2_layout.addWidget(_tracking_group)
 
         # analysis parameters
-        self.analysis_group = QGroupBox("Analysis")
-        self.analysis_layout = QVBoxLayout()
+        analysis_group = QGroupBox("Analysis")
+        analysis_layout = QVBoxLayout()
+        analysis_group.setLayout(analysis_layout)
+
         self.analysis_input_combo = QComboBox()
         self.plot_msd_button = QPushButton("Plot MSDs")
         self.D_init = QLineEdit()
@@ -178,17 +202,22 @@ class napariGEMspaWidget(QWidget):
 
         self.plot_pwdists_button = QPushButton("Plot displacements")
 
-        self.analysis_layout.addWidget(self.analysis_input_combo)
-        self.analysis_layout.addWidget(self.plot_msd_button)
-        self.analysis_layout.addWidget(_fit_pars_widget)
-        self.analysis_layout.addWidget(self.plot_pwdists_button)
-        self.analysis_group.setLayout(self.analysis_layout)
+        analysis_layout.addWidget(self.analysis_input_combo)
+        analysis_layout.addWidget(self.plot_msd_button)
+        analysis_layout.addWidget(_fit_pars_widget)
+        analysis_layout.addWidget(self.plot_pwdists_button)
+        analysis_group.setLayout(analysis_layout)
 
-        # finally, stack up all of the grouped widgets
-        self.layout.addWidget(self.image_params_box)
-        self.layout.addWidget(self.localization_group)
-        self.layout.addWidget(self.tracking_group)
-        self.layout.addWidget(self.analysis_group)
+        subwidget2_layout.addWidget(analysis_group)
+
+        # add subwidget 2 to main layout
+        main_tab.addTab(subwidget2, "Tracking/analysis")
+
+        self.save_state_button = QPushButton("Save state")
+        self.load_state_button = QPushButton("Load state")
+
+        self.layout.addWidget(self.save_state_button)
+        self.layout.addWidget(self.load_state_button)
         self.layout.addStretch()
 
         # setup button behaviors
@@ -415,9 +444,7 @@ class napariGEMspaWidget(QWidget):
 
         # do ensemble average MSDs
         msds = (
-            tracks.groupby("track_id")
-            .apply(u.compute_msd)
-            .reset_index(level=0)
+            tracks.groupby("track_id").apply(u.compute_msd).reset_index(level=0)
         )
         avg_msd = (
             msds.groupby("lag")["MSD"]
@@ -468,6 +495,6 @@ class napariGEMspaWidget(QWidget):
         )
         ax.set_xlabel("distance, $\mu m$")
         ax.set_ylabel("density")
-        ax.set_title(f"{_current_track}\n D={mle_res['D']:.3f} $\mu m^2 / s$")
+        ax.set_title(f"{_current_track}\n D={mle_res['D']:.3f} $\mu m^2 / s$, slope={mle_res['slope']:.4E}")
         plt.show()
         plt.ioff()
