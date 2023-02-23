@@ -12,6 +12,7 @@ import tifffile
 import matplotlib.pyplot as plt
 import napari
 import json
+import io
 
 from qtpy.QtWidgets import (
     QCheckBox,
@@ -66,6 +67,7 @@ class napariGEMspaWidget(QWidget):
 
         self.msds_data = {}
         self.pwdists_data = {}
+        self.plot_data = None
 
         # if there are layers, update choices
         if len(self.viewer.layers) > 0:
@@ -197,22 +199,19 @@ class napariGEMspaWidget(QWidget):
         self.slope_init.setText("0.001")
 
         _fit_pars_widget = QWidget()
-        _fit_pars_layout = QHBoxLayout()
+        _fit_pars_layout = QFormLayout()
         self.D_init.setValidator(_D_validator)
         self.slope_init.setValidator(_slope_validator)
 
         _fit_pars_widget.setLayout(_fit_pars_layout)
-        _fit_pars_layout.addWidget(QLabel("D_init"))
-        _fit_pars_layout.addWidget(self.D_init)
-        _fit_pars_layout.addWidget(QLabel("slope_init"))
-        _fit_pars_layout.addWidget(self.slope_init)
+        _fit_pars_layout.addRow("D_init", self.D_init)
+        _fit_pars_layout.addRow("slope_init", self.slope_init)
 
-        self.plot_pwdists_button = QPushButton("Plot displacements")
+        self.analyze_tracks_button = QPushButton("Analyze!")
 
         analysis_layout.addWidget(self.analysis_input_combo)
-        analysis_layout.addWidget(self.plot_msd_button)
         analysis_layout.addWidget(_fit_pars_widget)
-        analysis_layout.addWidget(self.plot_pwdists_button)
+        analysis_layout.addWidget(self.analyze_tracks_button)
         analysis_group.setLayout(analysis_layout)
 
         subwidget2_layout.addWidget(analysis_group)
@@ -237,8 +236,8 @@ class napariGEMspaWidget(QWidget):
         self.tracking_button.clicked.connect(
             self._link_trajectories_at_current_points
         )
-        self.plot_msd_button.clicked.connect(self._plot_msd)
-        self.plot_pwdists_button.clicked.connect(self._plot_pwdists_hist)
+
+        self.analyze_tracks_button.clicked.connect(self._analyze_tracks)
 
         self.save_state_button.clicked.connect(self.save_state)
         self.load_state_button.clicked.connect(self.load_state)
@@ -444,14 +443,15 @@ class napariGEMspaWidget(QWidget):
                 ["track_id", "frame_y", "y", "x"]
             ]
 
-    def _plot_msd(self):
+    def _analyze_tracks(self):
+        # common parameters
         dt = float(self.time_interval.text())
         _current_track = self.analysis_input_combo.currentText()
         tracks = pd.DataFrame(
             self.viewer.layers[_current_track].data,
             columns=["track_id", "frame", "y", "x"],
         )
-
+        # START of MSD analysis
         # do ensemble average MSDs
         msds = (
             tracks.groupby("track_id").apply(u.compute_msd).reset_index(level=0)
@@ -471,27 +471,16 @@ class napariGEMspaWidget(QWidget):
 
         # slope / 2 * dimensionality => diffusion coefficient
         self.msds_data["D"] = slope / 4.0
+        # END of MSD analysis
 
-        plt.ion()
-        fig, ax = plt.subplots(figsize=(4, 3))
-        ax.errorbar(_x, _y, yerr=_s, fmt="o", ecolor="gray")
-        ax.plot(_x, slope * _x, "r--", lw=2)
-        ax.set_xlabel("$\\tau$, seconds")
-        ax.set_ylabel("MSD, $\mu m^2$")
-        ax.set_title(f"{_current_track}\nD = {slope / 4.0:0.3f} $\mu m^2 / s$")
-        plt.show()
-        plt.ioff()
-
-    def _plot_pwdists_hist(self):
+        # START of pairwise displace
+        # pairwise displacements analysis parameters
         D_init = float(self.D_init.text())
         slope_init = float(self.slope_init.text())
         dt = float(self.time_interval.text())
         _current_track = self.analysis_input_combo.currentText()
         r_max = self.laptrack_max_displacement.value()
-        tracks = pd.DataFrame(
-            self.viewer.layers[_current_track].data,
-            columns=["track_id", "frame", "y", "x"],
-        )
+
         pwdists = u.get_paired_displacements(tracks)
         pwdists = pwdists[pwdists <= r_max]
 
@@ -507,19 +496,32 @@ class napariGEMspaWidget(QWidget):
         _dfine = np.linspace(0, r_max, num=200)
 
         plt.ion()
-        fig, ax = plt.subplots(figsize=(4, 3))
-        ax.hist(pwdists, 30, density=True, linewidth=1.25, edgecolor="k")
-        ax.plot(
+        fig, ax = plt.subplots(figsize=(8, 3.75), ncols=2)
+        ax[0].errorbar(_x, _y, yerr=_s, fmt="o", ecolor="gray")
+        ax[0].plot(_x, slope * _x, "r--", lw=2)
+        ax[0].set_xlabel("$\\tau$, seconds")
+        ax[0].set_ylabel("MSD, $\mu m^2$")
+        ax[0].set_title(f"{_current_track}\nD = {slope / 4.0:0.3f} $\mu m^2 / s$")
+
+        ax[1].hist(pwdists, 30, density=True, linewidth=1.25, edgecolor="k")
+        ax[1].plot(
             _dfine,
             u.rayleigh_pdf(_dfine, mle_res["D"], mle_res["slope"], dt, r_max),
             "k-",
             lw=2,
         )
-        ax.set_xlabel("distance, $\mu m$")
-        ax.set_ylabel("density")
-        ax.set_title(
+        ax[1].set_xlabel("distance, $\mu m$")
+        ax[1].set_ylabel("density")
+        ax[1].set_title(
             f"{_current_track}\n D={mle_res['D']:.3f} $\mu m^2 / s$, slope={mle_res['slope']:.4E}"
         )
+        fig.tight_layout()
+
+        # dump pdf plot data to buffer
+        _buffer = io.BytesIO()
+        fig.savefig(_buffer, format="pdf")
+        self.plot_data = _buffer.getvalue()
+
         plt.show()
         plt.ioff()
 
@@ -591,6 +593,11 @@ class napariGEMspaWidget(QWidget):
                 self.pwdists_data["data"],
                 fmt="%.5f"
             )
+
+        # save pdf plot
+        if self.plot_data is not None:
+            with open(output_path / f"{current_tracks}_plot.pdf", "wb") as f:
+                f.write(self.plot_data)
 
     def load_state(self):
         print("not implemented yet!")
