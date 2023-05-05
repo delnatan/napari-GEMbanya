@@ -118,9 +118,12 @@ class napariGEMspaWidget(QWidget):
         self.frame_end.setValue(1)
         self.frame_end.setRange(1, 1)
 
+        self._apply_scale_button = QPushButton("Set pixel size")
+        
         _image_params_form.addRow("data", self.input_layer_combo)
         _image_params_form.addRow("mask", self.mask_layer_combo)
         _image_params_form.addRow("pixel size, um", self.pixel_size)
+        _image_params_form.addRow(None, self._apply_scale_button)
         _image_params_form.addRow("dt, s", self.time_interval)
         _image_params_form.addRow("frame start", self.frame_start)
         _image_params_form.addRow("frame end", self.frame_end)
@@ -229,6 +232,9 @@ class napariGEMspaWidget(QWidget):
         # setup button behaviors
         self.input_layer_combo.currentTextChanged.connect(
             self._update_frame_range
+        )
+        self._apply_scale_button.clicked.connect(
+            self._set_pixel_size
         )
         self.localization_button.clicked.connect(
             self._find_spots_at_current_image
@@ -351,6 +357,17 @@ class napariGEMspaWidget(QWidget):
             self.frame_end.setRange(0, Nframes)
             self.frame_start.setValue(0)
             self.frame_end.setValue(min(10, Nframes))
+
+    def _set_pixel_size(self):
+        current_layer = self.input_layer_combo.currentText()
+        dxy = float(self.pixel_size.text())
+        self.viewer.layers[current_layer].scale = (1, dxy, dxy)
+
+        # also apply to all masks
+        for layer in self.viewer.layers:
+            if is_Label_type(layer):
+                layer.scale = (1, dxy, dxy)
+
 
     def _find_spots_at_current_image(self):
         current_layer = self.input_layer_combo.currentText()
