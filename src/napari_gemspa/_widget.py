@@ -590,10 +590,17 @@ class napariGEMspaWidget(QWidget):
             
         for track in tracks_layers:
             _track = self.viewer.layers[track].data
-            np.savetxt(
-                output_path / f"{track}_track.txt",
+            
+            # save track data as pandas dataframe
+            df = pd.DataFrame(
                 _track,
+                columns=["track_id", "frame", "x", "y"]
             )
+            df["track_id"] = df["track_id"].astype(int)
+            df["frame"] = df["frame"].astype(int)
+
+            df.to_csv(output_path / f"{track}_track.csv", index=False)
+        
 
         # save to a JSON file
         with open(output_path / f"{current_tracks}_params.json", "w") as f:
