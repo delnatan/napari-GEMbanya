@@ -156,6 +156,8 @@ def isolate_spots(data, mask=None, threshold=10, sigma=1.5):
 
     spots = []
 
+    _mask = (mask == 1) # label = 1 is reserved for cytoplasm
+
     for t in tqdm(range(Nt)):
         _frame = np.float64(data[t, :, :])
         _response = -gaussian_laplace(_frame, sigma)
