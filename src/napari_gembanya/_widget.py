@@ -55,7 +55,7 @@ def is_Tracks_type(x):
     return isinstance(x, napari.layers.tracks.tracks.Tracks)
 
 
-class napariGEMspaWidget(QWidget):
+class napariGEMbanyaWidget(QWidget):
     # your QWidget.__init__ can optionally request the napari viewer instance
     # in one of two ways:
     # 1. use a parameter called `napari_viewer`, as done here
@@ -444,7 +444,7 @@ class napariGEMspaWidget(QWidget):
         # data = self.viewer.layers[selected_points].data
         # data_df = pd.DataFrame(data, columns=["frame", "y", "x"])
         data_df = self.xyloc_df
-        
+
         # max dist
         max_disp = self.laptrack_max_displacement.value()
 
