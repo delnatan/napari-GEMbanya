@@ -133,6 +133,22 @@ def mle_fit(data, init_D=1.0, init_b=1e-2, r_max=0.8, dt=0.020):
     return {"D": res.x[0], "slope": res.x[1]}
 
 
+def do_photometry(data, yxlocs, boxsize=5, bgsize=7):
+    Npeaks = yxlocs.shape[0]
+    intensities = []
+    s = boxsize // 2
+    w = bgsize // 2
+    boxarea = boxsize * boxsize
+    bgarea = bgsize * bgsize
+    for n in range(Npeaks):
+        yc = yxlocs[n, 0]
+        xc = yxlocs[n, 1]
+        innerbox = data[yc - s : yc + s + 1, xc - s : xc + s + 1].sum()
+        outerbox = data[yc - w : yc + w + 1, xc - w : xc + w + 1].sum()
+        bg = (outerbox - innerbox) / (bgarea - boxarea)
+        intensities.append((innerbox - (bg * boxsize)) / boxarea)
+    return np.array(intensities)
+
 def isolate_spots(data, mask=None, threshold=10, sigma=1.5):
     """uses 2d laplace operator to identify fluorescent peaks"""
     Nt, Ny, Nx = data.shape
@@ -145,7 +161,11 @@ def isolate_spots(data, mask=None, threshold=10, sigma=1.5):
         _peaklocs = peak_local_max(
             _response, labels=mask, threshold_abs=threshold, min_distance=3
         )
-        _df = pd.DataFrame(_peaklocs, columns=["y", "x"])
+        _intensities = do_photometry(_frame, _peaklocs)
+        _df = pd.DataFrame(
+            np.column_stack([_peaklocs, _intensities]), 
+            columns=["y", "x", "intensity"]
+        )
         _df["frame"] = t
         spots.append(_df)
 
@@ -286,26 +306,42 @@ def compute_msd(sdf):
         return None
 
 
-def fitline(x, y, s):
-    n = len(x)
-    s2 = s * s
-    wcovxy = np.sum((x * y) / s2)
-    wvarx = np.sum((x * x) / s2)
-    slope = wcovxy / wvarx
-    mse = np.sum(np.square(y - slope * x)) / (n - 1)
-    return slope, mse
+def fit_msds(x, y, s, ndim=2):
+    """do weighted linear regression
 
+    Since 'y' can be computed from displacements in arbitrary
+    dimensions, the 'ndim' parameter needs to be specified. By
+    default it is 2.
 
-def fitline2(x, y, s):
-    """https://chem.libretexts.org/Bookshelves/Analytical_Chemistry/Chemometrics_Using_R_(Harvey)/08%3A_Modeling_Data/8.02%3A_Weighted_Linear_Regression_with_Errors_in_y"""
-    n = len(x)
-    w = (n / s**2) / np.sum(1 / s**2)
-    wy = np.sum(w * y)
-    wx = np.sum(w * x)
-    wxy = np.sum(w * x * y)
-    wxx = np.sum(w * x * x)
+    Args:
+        x (ndarray): independent variables, x
+        y (ndarray): observed data, y
+        s (ndarray): standard deviation of y
+        ndim (int): dimensionality of data, default 2.
 
-    slope = (n * wxy - wx * wy) / (n * wxx - wxx**2)
-    intercept = (wy - slope * wx) / n
+    """
+    n = len(y)
+    X = np.column_stack([x, np.ones_like(x)])
+    A = X.T @ (X / s[:, None])
+    b = X.T @ (y / s)
+    # coefs[0], slope
+    # coefs[1], y-intercept
+    coefs = np.linalg.solve(A, b)
 
-    return slope, intercept
+    # compute covariances
+    y_pred = X @ coefs
+    residuals = y - y_pred
+    var_residuals = np.sum(residuals**2) / (len(y) - 2)
+    iXtX = np.linalg.inv(X.T @ X)
+    cov_mat = var_residuals * iXtX
+    coef_variances = np.diag(cov_mat)
+
+    # compute diffusion coefficients
+    D = coefs[0] / (2 * ndim)
+    loc_error = coefs[1]
+
+    # get standard deviations for fit coefficients
+    D_std = np.sqrt(coef_variances[0] / (2 * ndim))
+    loc_error_std = np.sqrt(coef_variances[1])
+
+    return (D, D_std), (loc_error, loc_error_std), coefs

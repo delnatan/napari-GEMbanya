@@ -31,7 +31,7 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QTabWidget,
     QWidget,
-    QFileDialog
+    QFileDialog,
 )
 from qtpy.QtGui import QDoubleValidator
 from pathlib import Path
@@ -68,6 +68,7 @@ class napariGEMspaWidget(QWidget):
         self.msds_data = {}
         self.pwdists_data = {}
         self.plot_data = None
+        self.xyloc_df = None
 
         # if there are layers, update choices
         if len(self.viewer.layers) > 0:
@@ -119,7 +120,7 @@ class napariGEMspaWidget(QWidget):
         self.frame_end.setRange(1, 1)
 
         self._apply_scale_button = QPushButton("Set pixel size")
-        
+
         _image_params_form.addRow("data", self.input_layer_combo)
         _image_params_form.addRow("mask", self.mask_layer_combo)
         _image_params_form.addRow("pixel size, um", self.pixel_size)
@@ -233,9 +234,7 @@ class napariGEMspaWidget(QWidget):
         self.input_layer_combo.currentTextChanged.connect(
             self._update_frame_range
         )
-        self._apply_scale_button.clicked.connect(
-            self._set_pixel_size
-        )
+        self._apply_scale_button.clicked.connect(self._set_pixel_size)
         self.localization_button.clicked.connect(
             self._find_spots_at_current_image
         )
@@ -368,7 +367,6 @@ class napariGEMspaWidget(QWidget):
             if is_Label_type(layer):
                 layer.scale = (1, dxy, dxy)
 
-
     def _find_spots_at_current_image(self):
         current_layer = self.input_layer_combo.currentText()
         current_mask = self.mask_layer_combo.currentText()
@@ -419,6 +417,8 @@ class napariGEMspaWidget(QWidget):
         xyloc_df["x_um"] = xyloc_df["x"].astype(float) * dxy
         xyloc_df["y_um"] = xyloc_df["y"].astype(float) * dxy
 
+        self.xyloc_df = xyloc_df
+
         # aicsimageio loads image with "xy" as the last axes...
         if target_layer_name not in self.viewer.layers:
             self.viewer.add_points(
@@ -441,12 +441,17 @@ class napariGEMspaWidget(QWidget):
         current_layer = self.input_layer_combo.currentText()
         spacing = self.viewer.layers[current_layer].scale
         selected_points = self.laptrack_input_combo.currentText()
-        data = self.viewer.layers[selected_points].data
-        data_df = pd.DataFrame(data, columns=["frame", "y", "x"])
+        # data = self.viewer.layers[selected_points].data
+        # data_df = pd.DataFrame(data, columns=["frame", "y", "x"])
+        data_df = self.xyloc_df
+        
         # max dist
         max_disp = self.laptrack_max_displacement.value()
 
         tracks = u.link_spots_to_trajectory(data_df, max_displacement=max_disp)
+
+        self.xyloc_df = tracks
+
         tracks_name = f"{selected_points}_tracks"
 
         if tracks_name not in self.viewer.layers:
@@ -464,14 +469,18 @@ class napariGEMspaWidget(QWidget):
         # common parameters
         dt = float(self.time_interval.text())
         _current_track = self.analysis_input_combo.currentText()
-        tracks = pd.DataFrame(
-            self.viewer.layers[_current_track].data,
-            columns=["track_id", "frame", "y", "x"],
-        )
+        # tracks = pd.DataFrame(
+        #     self.viewer.layers[_current_track].data,
+        #     columns=["track_id", "frame", "y", "x"],
+        # )
+        tracks = self.xyloc_df
+
         # START of MSD analysis
         # do ensemble average MSDs
         msds = (
-            tracks.groupby("track_id").apply(u.compute_msd).reset_index(level=0)
+            tracks.groupby("track_id")
+            .apply(u.compute_msd)
+            .reset_index(level=0)
         )
         avg_msd = (
             msds.groupby("lag")["MSD"]
@@ -484,10 +493,12 @@ class napariGEMspaWidget(QWidget):
         _x = avg_msd["lag"].to_numpy() * dt
         _y = avg_msd["mean"].to_numpy()
         _s = avg_msd["std"].to_numpy()
-        slope, mse = u.fitline(_x, _y, _s)
+        D, loc_error, c = u.fit_msds(_x, _y, _s)
+
+        slope, yintercept = c
 
         # slope / 2 * dimensionality => diffusion coefficient
-        self.msds_data["D"] = slope / 4.0
+        self.msds_data["D"] = D[0]
         # END of MSD analysis
 
         # START of pairwise displace
@@ -507,18 +518,20 @@ class napariGEMspaWidget(QWidget):
             pwdists, init_D=D_init, init_b=slope_init, dt=dt, r_max=r_max
         )
 
-        self.pwdists_data["D"] = mle_res['D']
-        self.pwdists_data["background_slope"] = mle_res['slope']
+        self.pwdists_data["D"] = mle_res["D"]
+        self.pwdists_data["background_slope"] = mle_res["slope"]
 
         _dfine = np.linspace(0, r_max, num=200)
 
         plt.ion()
         fig, ax = plt.subplots(figsize=(8, 3.75), ncols=2)
         ax[0].errorbar(_x, _y, yerr=_s, fmt="o", ecolor="gray")
-        ax[0].plot(_x, slope * _x, "r--", lw=2)
+        ax[0].plot(_x, slope * _x + yintercept, "r--", lw=2)
         ax[0].set_xlabel("$\\tau$, seconds")
         ax[0].set_ylabel("MSD, $\mu m^2$")
-        ax[0].set_title(f"{_current_track}\nD = {slope / 4.0:0.3f} $\mu m^2 / s$")
+        ax[0].set_title(
+            f"{_current_track}\nD = {D[0]:0.3f} ± {D[1]:0.3f} $\mu m^2 / s$"
+        )
 
         ax[1].hist(pwdists, 30, density=True, linewidth=1.25, edgecolor="k")
         ax[1].plot(
@@ -544,7 +557,9 @@ class napariGEMspaWidget(QWidget):
 
     def save_state(self):
         current_image = self.input_layer_combo.currentText()
-        current_image_path = Path(self.viewer.layers[current_image].source.path)
+        current_image_path = Path(
+            self.viewer.layers[current_image].source.path
+        )
         parent_path = current_image_path.parent
         output_path = parent_path / current_image_path.stem
         if not output_path.exists():
@@ -573,9 +588,9 @@ class napariGEMspaWidget(QWidget):
             "spot_threshold": self.laplace_thres.text(),
             "spot_sigma": self.laplace_sigma.text(),
             "max_disp": self.laptrack_max_displacement.text(),
-            "D_msd (um^2/s)": self.msds_data['D'],
-            "D_pwd (um^2/s)": self.pwdists_data['D'],
-            "bg_pwd": self.pwdists_data['background_slope'],
+            "D_msd (um^2/s)": self.msds_data["D"],
+            "D_pwd (um^2/s)": self.pwdists_data["D"],
+            "bg_pwd": self.pwdists_data["background_slope"],
         }
 
         # save all layers data
@@ -583,24 +598,17 @@ class napariGEMspaWidget(QWidget):
             # save the max projection instead of entire timestacks
             _mask = self.viewer.layers[mask].data.max(axis=0).astype(np.uint8)
 
-            tifffile.imwrite(
-                output_path / f"{mask}_mask.tif",
-                _mask
-            )
-            
+            tifffile.imwrite(output_path / f"{mask}_mask.tif", _mask)
+
         for track in tracks_layers:
             _track = self.viewer.layers[track].data
-            
+
             # save track data as pandas dataframe
-            df = pd.DataFrame(
-                _track,
-                columns=["track_id", "frame", "x", "y"]
-            )
+            df = pd.DataFrame(_track, columns=["track_id", "frame", "x", "y"])
             df["track_id"] = df["track_id"].astype(int)
             df["frame"] = df["frame"].astype(int)
 
             df.to_csv(output_path / f"{track}_track.csv", index=False)
-        
 
         # save to a JSON file
         with open(output_path / f"{current_tracks}_params.json", "w") as f:
@@ -615,7 +623,7 @@ class napariGEMspaWidget(QWidget):
             np.savetxt(
                 output_path / f"{current_tracks}_pwdists.txt",
                 self.pwdists_data["data"],
-                fmt="%.5f"
+                fmt="%.5f",
             )
 
         # save pdf plot
@@ -626,9 +634,7 @@ class napariGEMspaWidget(QWidget):
     def load_state(self):
         print("not implemented yet!")
         folder_path = Path(
-            QFileDialog.getExistingDirectory(
-            None, "Select a folder", "~/"
-            )
+            QFileDialog.getExistingDirectory(None, "Select a folder", "~/")
         )
         print(folder_path)
         pass
