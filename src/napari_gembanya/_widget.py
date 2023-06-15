@@ -407,8 +407,6 @@ class napariGEMbanyaWidget(QWidget):
         if current_mask != "":
             # mask should already be 2D
             mask = self.viewer.layers[current_mask].data
-            # set uniform mask
-            self.viewer.layers[current_mask].data[...] = mask
             self.viewer.layers[current_mask].refresh()
         else:
             mask = None
