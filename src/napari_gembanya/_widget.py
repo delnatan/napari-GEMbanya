@@ -68,7 +68,6 @@ class napariGEMbanyaWidget(QWidget):
         self.msds_data = {}
         self.pwdists_data = {}
         self.plot_data = None
-        self.xyloc_df = None
 
         # if there are layers, update choices
         if len(self.viewer.layers) > 0:
@@ -119,8 +118,9 @@ class napariGEMbanyaWidget(QWidget):
         self.frame_end.setValue(1)
         self.frame_end.setRange(1, 1)
 
+        self._add_mask_button = QPushButton("Create mask")
         self._apply_scale_button = QPushButton("Set pixel size")
-
+        _image_params_form.addRow(None, self._add_mask_button)
         _image_params_form.addRow("data", self.input_layer_combo)
         _image_params_form.addRow("mask", self.mask_layer_combo)
         _image_params_form.addRow("pixel size, um", self.pixel_size)
@@ -234,6 +234,7 @@ class napariGEMbanyaWidget(QWidget):
         self.input_layer_combo.currentTextChanged.connect(
             self._update_frame_range
         )
+        self._add_mask_button.clicked.connect(self._add_2d_mask)
         self._apply_scale_button.clicked.connect(self._set_pixel_size)
         self.localization_button.clicked.connect(
             self._find_spots_at_current_image
@@ -246,6 +247,23 @@ class napariGEMbanyaWidget(QWidget):
 
         self.save_state_button.clicked.connect(self.save_state)
         self.load_state_button.clicked.connect(self.load_state)
+
+    def _add_2d_mask(self):
+        # check for images in layers
+        image_layer_names = []
+
+        for layer in self.viewer.layers:
+            if is_Image_type(layer):
+                image_layer_names.append(layer.name)
+
+        if len(image_layer_names) > 0:
+            # pick the first image, for now
+            image_layer = self.viewer.layers[image_layer_names[0]]
+            image_size = image_layer.data.shape[-2:]
+            mask_layer = self.viewer.add_labels(
+                np.zeros(image_size, dtype=int), name="Mask"
+            )
+            mask_layer.scale = image_layer.scale[-2:]
 
     def _update_on_inserted(self, event):
         # the layer that triggered the event:
@@ -387,13 +405,8 @@ class napariGEMbanyaWidget(QWidget):
         _dims_not_displayed = tuple(i for i in range(data.ndim - 2))
 
         if current_mask != "":
-            #  ensure mask is 2D (whatever is displayed)
-            mask = (
-                self.viewer.layers[current_mask].data.max(
-                    axis=_dims_not_displayed
-                )
-                > 0
-            )
+            # mask should already be 2D
+            mask = self.viewer.layers[current_mask].data
             # set uniform mask
             self.viewer.layers[current_mask].data[...] = mask
             self.viewer.layers[current_mask].refresh()
@@ -417,13 +430,12 @@ class napariGEMbanyaWidget(QWidget):
         xyloc_df["x_um"] = xyloc_df["x"].astype(float) * dxy
         xyloc_df["y_um"] = xyloc_df["y"].astype(float) * dxy
 
-        self.xyloc_df = xyloc_df
-
         # aicsimageio loads image with "xy" as the last axes...
         if target_layer_name not in self.viewer.layers:
             self.viewer.add_points(
                 xyloc_df[["frame", "y_um", "x_um"]],
                 name=target_layer_name,
+                features={"intensity": xyloc_df["intensity"]},
                 symbol="square",
                 size=7 * dxy,
                 edge_color="yellow",
@@ -433,6 +445,9 @@ class napariGEMbanyaWidget(QWidget):
             self.viewer.layers[target_layer_name].data = xyloc_df[
                 ["frame", "y_um", "x_um"]
             ].to_numpy()
+            self.viewer.layers[target_layer_name].features = {
+                "intensity": xyloc_df["intensity"]
+            }
             # new points are automatically selected
             self.viewer.layers[target_layer_name].selected_data = set()
             # simply setting it to an empty set will deselect new points
@@ -441,39 +456,47 @@ class napariGEMbanyaWidget(QWidget):
         current_layer = self.input_layer_combo.currentText()
         spacing = self.viewer.layers[current_layer].scale
         selected_points = self.laptrack_input_combo.currentText()
-        # data = self.viewer.layers[selected_points].data
-        # data_df = pd.DataFrame(data, columns=["frame", "y", "x"])
-        data_df = self.xyloc_df
+        data = np.column_stack(
+            (
+                self.viewer.layers[selected_points].data,
+                self.viewer.layers[selected_points].features["intensity"],
+            )
+        )
+        data_df = pd.DataFrame(
+            data, columns=["frame", "y_um", "x_um", "intensity"]
+        )
 
         # max dist
         max_disp = self.laptrack_max_displacement.value()
 
+        # do linking on physical coordinates (not pixel coordinates)
         tracks = u.link_spots_to_trajectory(data_df, max_displacement=max_disp)
-
-        self.xyloc_df = tracks
 
         tracks_name = f"{selected_points}_tracks"
 
         if tracks_name not in self.viewer.layers:
             self.viewer.add_tracks(
-                tracks[["track_id", "frame_y", "y", "x"]],
+                tracks[["track_id", "frame", "y_um", "x_um"]],
+                properties={"intensity": tracks["intensity"]},
                 tail_length=5,
                 name=f"{selected_points}_tracks",
             )
         else:
             self.viewer.layers[tracks_name].data = tracks[
-                ["track_id", "frame_y", "y", "x"]
+                ["track_id", "frame", "y_um", "x_um"]
             ]
+            self.viewer.layers[tracks_name].properties = {
+                "intensity": tracks["intensity"]
+            }
 
     def _analyze_tracks(self):
         # common parameters
         dt = float(self.time_interval.text())
         _current_track = self.analysis_input_combo.currentText()
-        # tracks = pd.DataFrame(
-        #     self.viewer.layers[_current_track].data,
-        #     columns=["track_id", "frame", "y", "x"],
-        # )
-        tracks = self.xyloc_df
+        tracks = pd.DataFrame(
+            self.viewer.layers[_current_track].data,
+            columns=["track_id", "frame", "y_um", "x_um"],
+        )
 
         # START of MSD analysis
         # do ensemble average MSDs
@@ -493,6 +516,7 @@ class napariGEMbanyaWidget(QWidget):
         _x = avg_msd["lag"].to_numpy() * dt
         _y = avg_msd["mean"].to_numpy()
         _s = avg_msd["std"].to_numpy()
+
         D, loc_error, c = u.fit_msds(_x, _y, _s)
 
         slope, yintercept = c
@@ -562,6 +586,7 @@ class napariGEMbanyaWidget(QWidget):
         )
         parent_path = current_image_path.parent
         output_path = parent_path / current_image_path.stem
+
         if not output_path.exists():
             output_path.mkdir(exist_ok=True)
 
@@ -578,58 +603,68 @@ class napariGEMbanyaWidget(QWidget):
 
         current_tracks = self.analysis_input_combo.currentText()
 
-        # gather analysis parameters
-        params = {
-            "data": str(current_image_path),
-            "dxy": self.pixel_size.text(),
-            "dt": self.time_interval.text(),
-            "frame_start": self.frame_start.value(),
-            "frame_end": self.frame_end.value(),
-            "spot_threshold": self.laplace_thres.text(),
-            "spot_sigma": self.laplace_sigma.text(),
-            "max_disp": self.laptrack_max_displacement.text(),
-            "D_msd (um^2/s)": self.msds_data["D"],
-            "D_pwd (um^2/s)": self.pwdists_data["D"],
-            "bg_pwd": self.pwdists_data["background_slope"],
-        }
+        try:
+            # gather analysis parameters
+            params = {
+                "data": str(current_image_path),
+                "dxy": self.pixel_size.text(),
+                "dt": self.time_interval.text(),
+                "frame_start": self.frame_start.value(),
+                "frame_end": self.frame_end.value(),
+                "spot_threshold": self.laplace_thres.text(),
+                "spot_sigma": self.laplace_sigma.text(),
+                "max_disp": self.laptrack_max_displacement.text(),
+                "D_msd (um^2/s)": self.msds_data["D"],
+                "D_pwd (um^2/s)": self.pwdists_data["D"],
+                "bg_pwd": self.pwdists_data["background_slope"],
+            }
 
-        # save all layers data
-        for mask in masks_layers:
-            # save the max projection instead of entire timestacks
-            _mask = self.viewer.layers[mask].data.max(axis=0).astype(np.uint8)
+            # save to a JSON file
+            with open(output_path / f"{current_tracks}_params.json", "w") as f:
+                json.dump(params, f, indent=2)
 
-            tifffile.imwrite(output_path / f"{mask}_mask.tif", _mask)
+            if self.msds_data is not None:
+                self.msds_data["data"].to_csv(
+                    output_path / f"{current_tracks}_MSD.csv", index=False
+                )
 
-        for track in tracks_layers:
-            _track = self.viewer.layers[track].data
+            if self.pwdists_data is not None:
+                np.savetxt(
+                    output_path / f"{current_tracks}_pwdists.txt",
+                    self.pwdists_data["data"],
+                    fmt="%.5f",
+                )
 
-            # save track data as pandas dataframe
-            df = pd.DataFrame(_track, columns=["track_id", "frame", "x", "y"])
-            df["track_id"] = df["track_id"].astype(int)
-            df["frame"] = df["frame"].astype(int)
+            # save pdf plot
+            if self.plot_data is not None:
+                with open(
+                    output_path / f"{current_tracks}_plot.pdf", "wb"
+                ) as f:
+                    f.write(self.plot_data)
 
-            df.to_csv(output_path / f"{track}_track.csv", index=False)
+        except KeyError:
+            print("Data has not been analyzed")
 
-        # save to a JSON file
-        with open(output_path / f"{current_tracks}_params.json", "w") as f:
-            json.dump(params, f, indent=2)
+        if len(masks_layers) > 0:
+            # save all layers data
+            for mask in masks_layers:
+                # save the max projection instead of entire timestacks
+                _mask = self.viewer.layers[mask].data.astype(np.uint8)
 
-        if self.msds_data is not None:
-            self.msds_data["data"].to_csv(
-                output_path / f"{current_tracks}_MSD.csv", index=False
-            )
+                tifffile.imwrite(output_path / f"{mask}_mask.tif", _mask)
 
-        if self.pwdists_data is not None:
-            np.savetxt(
-                output_path / f"{current_tracks}_pwdists.txt",
-                self.pwdists_data["data"],
-                fmt="%.5f",
-            )
-
-        # save pdf plot
-        if self.plot_data is not None:
-            with open(output_path / f"{current_tracks}_plot.pdf", "wb") as f:
-                f.write(self.plot_data)
+        if len(tracks_layers) > 0:
+            for track in tracks_layers:
+                _track = self.viewer.layers[track].data
+                _intensity = self.viewer.layers[track].properties["intensity"]
+                _data = np.column_stack((_track, _intensity))
+                # save track data as pandas dataframe
+                df = pd.DataFrame(
+                    _data, columns=["track_id", "frame", "y_um", "x_um", "intensity"]
+                )
+                df["track_id"] = df["track_id"].astype(int)
+                df["frame"] = df["frame"].astype(int)
+                df.to_csv(output_path / f"{track}_track.csv", index=False)
 
     def load_state(self):
         print("not implemented yet!")

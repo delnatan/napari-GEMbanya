@@ -149,6 +149,7 @@ def do_photometry(data, yxlocs, boxsize=5, bgsize=7):
         intensities.append((innerbox - (bg * boxsize)) / boxarea)
     return np.array(intensities)
 
+
 def isolate_spots(data, mask=None, threshold=10, sigma=1.5):
     """uses 2d laplace operator to identify fluorescent peaks"""
     Nt, Ny, Nx = data.shape
@@ -204,9 +205,10 @@ def link_spots_to_trajectory(spots, max_displacement=10.0):
     tracker = LapTrack(
         track_cost_cutoff=max_displacement**2, gap_closing_cost_cutoff=False
     )
+
     track_df, split_df, merge_df = tracker.predict_dataframe(
         spots,
-        coordinate_cols=["x", "y"],
+        coordinate_cols=["x_um", "y_um"],
         frame_col="frame",
         only_coordinate_cols=False,
         validate_frame=False,
@@ -220,7 +222,7 @@ def get_paired_displacements(linked_spots):
     (t, t+1).
 
     linked_spots (DataFrame): spot coordinates after trajectory linking. Must
-    have columns "x" and "y".
+    have columns "x_um" and "y_um".
 
     Returns:
     np.array containing all displacements from a single timeframe
@@ -248,7 +250,7 @@ def get_paired_displacements(linked_spots):
         # we want to only calculate distance of the same track_id
         # now made easier due to index-matched Series operation
         _pwdist = np.sqrt(
-            np.square(valid_start[["y", "x"]] - valid_end[["y", "x"]]).sum(
+            np.square(valid_start[["y_um", "x_um"]] - valid_end[["y_um", "x_um"]]).sum(
                 axis=1
             )
         )
@@ -282,8 +284,8 @@ def compute_msd(sdf):
         npts = np.zeros(nlags, dtype=int)
         frames = sdf["frame"].to_numpy()
         frames_set = set(frames)
-        xc = sdf["x"].to_numpy()
-        yc = sdf["y"].to_numpy()
+        xc = sdf["x_um"].to_numpy()
+        yc = sdf["y_um"].to_numpy()
 
         for i, lag in enumerate(lags):
             # ensure only correct lag time is used
