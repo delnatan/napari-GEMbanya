@@ -162,7 +162,7 @@ def isolate_spots(data, mask=None, threshold=10, sigma=1.5):
         _frame = np.float64(data[t, :, :])
         _response = -gaussian_laplace(_frame, sigma)
         _peaklocs = peak_local_max(
-            _response, labels=mask, threshold_abs=threshold, min_distance=3
+            _response, labels=_mask, threshold_abs=threshold, min_distance=3
         )
         _intensities = do_photometry(_frame, _peaklocs)
         _df = pd.DataFrame(
